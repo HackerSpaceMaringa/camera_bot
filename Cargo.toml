@@ -1,0 +1,14 @@
+[package]
+name = "camera_bot"
+version = "0.1.0"
+authors = ["Guilherme Chichanoski <guilherme.chichanoski@gmail.com>", "Tiago Nascimento <tiago@theosirian.com>"]
+edition = "2018"
+
+[dependencies]
+tokio = "0.1"
+tokio-core = "0.1"
+telebot = "0.3"
+futures = "0.1"
+reqwest = "=0.9.17"
+base64 = "0.10"
+serde = "1.0.100"
