@@ -8,6 +8,5 @@ edition = "2018"
 reqwest = { version = "0.10", features = ["json"] }
 tokio = { version = "0.2", features = ["full"] }
 futures = "0.3"
-base64 = "0.11"
 serde = "1.0.104"
 telegram-bot = { git = 'https://github.com/telegram-rs/telegram-bot' }
