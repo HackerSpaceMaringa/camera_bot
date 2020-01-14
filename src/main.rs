@@ -1,105 +1,93 @@
-#![feature(async_await)]
-
-use futures::{
-    future::{err, join_all, ok},
-    prelude::*,
-    stream::Stream,
-};
+use futures::prelude::*;
 use serde::Deserialize;
-use std::{env, io::Cursor, time::Duration};
-use telebot::{functions::*, Bot};
+use std::env;
+use telegram_bot::prelude::*;
+use telegram_bot::{Api, UpdateKind};
+
+#[derive(Debug)]
+struct Error {
+    message: String,
+}
 
 #[derive(Deserialize, Debug)]
 struct Monitor {
     mid: String,
 }
 
-fn main() {
-    // Create the bot
-    let mut bot = Bot::new(&env::var("TELEGRAM_BOT_KEY").unwrap()).update_interval(200);
+impl From<telegram_bot::Error> for Error {
+    fn from(_: telegram_bot::Error) -> Self {
+        Error {
+            message: "Bot deu ruim".to_string(),
+        }
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(_: reqwest::Error) -> Self {
+        Error {
+            message: "Shinobi deu ruim".to_string(),
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    let token = env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set");
+
     let base_url = format!(
         "http://{host}:{port}/{token}",
         host = env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
-        port = env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_owned()),
+        port = env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
         token = env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
     );
     let group_key = env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required");
 
-    let http_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .expect("IMPOSSIBLE TO RUN BOT WITHOUT A HTTP CLIENT!");
+    let api = Api::new(token);
+    let mut stream = api.stream();
 
-    // Register a reply command which answers a message
-    let handle = bot
-        .new_cmd("/photo")
-        .and_then(move |(bot, msg)| {
-            let response: Vec<Monitor> = http_client
-                .get(&format!(
-                    "{base_url}/smonitor/{group_key}",
-                    base_url = base_url,
-                    group_key = group_key
-                ))
-                .send()
-                .unwrap()
-                .json()
-                .unwrap();
+    while let Some(update) = stream.next().await {
+        if let UpdateKind::Message(telegram_bot::types::message::Message {
+            from: _user,
+            chat,
+            kind: telegram_bot::types::message::MessageKind::Text { data, entities },
+            ..
+        }) = update?.kind
+        {
+            for entity in &entities {
+                if entity.kind == telegram_bot::types::message::MessageEntityKind::BotCommand {
+                    let command = &data.as_str()
+                        [entity.offset as usize..entity.offset as usize + entity.length as usize];
+                    if command == "/photo" {
+                        let monitors: Vec<Monitor> = reqwest::get(&format!(
+                            "{base_url}/smonitor/{group_key}",
+                            base_url = base_url,
+                            group_key = group_key
+                        ))
+                        .await?
+                        .json()
+                        .await?;
 
-            join_all(
-                response
-                    .iter()
-                    .map(|monitor| {
-                        let mut resp = http_client
-                            .get(&format!(
+                        for monitor in &monitors {
+                            let bytes = reqwest::get(&format!(
                                 "{base_url}/jpeg/{group_key}/{monitor_id}/s.jpg",
                                 base_url = base_url,
                                 group_key = group_key,
                                 monitor_id = monitor.mid
                             ))
-                            .send()
-                            .unwrap();
+                            .await?
+                            .bytes()
+                            .await?;
 
-                        if resp.status().is_success() {
-                            dbg!(&resp);
-
-                            let mut buf = if let Some(length) = resp.headers().get("content-length")
-                            {
-                                if let Ok(length) = length.to_str() {
-                                    if let Ok(length) = length.parse() {
-                                        Vec::with_capacity(length)
-                                    } else {
-                                        Vec::new()
-                                    }
-                                } else {
-                                    Vec::new()
-                                }
-                            } else {
-                                Vec::new()
-                            };
-
-                            resp.copy_to(&mut buf).unwrap();
-
-                            let cursor = Cursor::new(buf);
-
-                            return bot
-                                .photo(msg.chat.id)
-                                .file(telebot::file::File::Memory {
-                                    name: "photo_phoda.jpg".to_owned(),
-                                    source: Box::new(cursor),
-                                })
-                                .send();
+                            api.send(chat.photo(telegram_bot::types::InputFileUpload::with_data(
+                                bytes, "teste",
+                            )))
+                            .await?;
                         }
+                    }
+                }
+            }
+        }
+    }
 
-                        panic!("FUCK THIS SHIT");
-
-                        //return bot
-                        //.message(msg.chat.id, "Não foi possível obter uma foto!".to_owned())
-                        //.send();
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .for_each(|_| Ok(()));
-
-    bot.run_with(handle);
+    Ok(())
 }

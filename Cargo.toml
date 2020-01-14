@@ -5,10 +5,9 @@ authors = ["Guilherme Chichanoski <guilherme.chichanoski@gmail.com>", "Tiago Nas
 edition = "2018"
 
 [dependencies]
-tokio = "0.1"
-tokio-core = "0.1"
-telebot = "0.3"
-futures = "0.1"
-reqwest = "=0.9.17"
-base64 = "0.10"
-serde = "1.0.100"
+reqwest = { version = "0.10", features = ["json"] }
+tokio = { version = "0.2", features = ["full"] }
+futures = "0.3"
+base64 = "0.11"
+serde = "1.0.104"
+telegram-bot = { git = 'https://github.com/telegram-rs/telegram-bot' }
