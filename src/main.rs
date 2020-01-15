@@ -114,30 +114,30 @@ async fn send_photos_to_chat(chat: &telegram_bot::types::MessageChat) -> Result<
 async fn bot() -> Result<(), Error> {
     API.send(CHAT.text("To Vivo!!")).await?;
 
-    let mut stream = API.stream();
-
-    while let Some(update) = stream.next().await {
-        if let UpdateKind::Message(telegram_bot::types::message::Message {
-            from: _user,
-            chat,
-            kind: telegram_bot::types::message::MessageKind::Text { data, entities },
-            ..
-        }) = update?.kind
-        {
-            for entity in &entities {
-                if entity.kind == telegram_bot::types::message::MessageEntityKind::BotCommand {
-                    let command = &data.as_str()
-                        [entity.offset as usize..entity.offset as usize + entity.length as usize];
-                    match command {
-                        "/photo" => send_photos_to_chat(&chat).await?,
-                        "/open" => HS_OPEN.store(true, std::sync::atomic::Ordering::Relaxed),
-                        "/close" => HS_OPEN.store(false, std::sync::atomic::Ordering::Relaxed),
-                        _ => {}
+    API.stream()
+        .for_each_concurrent(100, |update| async {
+            if let UpdateKind::Message(telegram_bot::types::message::Message {
+                from: _user,
+                chat,
+                kind: telegram_bot::types::message::MessageKind::Text { data, entities },
+                ..
+            }) = update.unwrap().kind
+            {
+                for entity in &entities {
+                    if entity.kind == telegram_bot::types::message::MessageEntityKind::BotCommand {
+                        let command = &data.as_str()[entity.offset as usize
+                            ..entity.offset as usize + entity.length as usize];
+                        match command {
+                            "/photo" => send_photos_to_chat(&chat).await.expect("Falha ao enviar"),
+                            "/open" => HS_OPEN.store(true, std::sync::atomic::Ordering::Relaxed),
+                            "/close" => HS_OPEN.store(false, std::sync::atomic::Ordering::Relaxed),
+                            _ => {}
+                        }
                     }
                 }
-            }
-        }
-    }
+            };
+        })
+        .await;
 
     Ok(())
 }
