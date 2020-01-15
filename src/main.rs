@@ -21,6 +21,8 @@ lazy_static! {
         Api::new(env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"));
     static ref GROUP_KEY: String =
         env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required");
+    static ref WEB_SERVER_BIND: String =
+        env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080");
     static ref CHAT: telegram_bot::types::chat::MessageChat =
         telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
             id: telegram_bot::types::refs::GroupId::new(
@@ -150,7 +152,7 @@ async fn main() -> Result<(), Error> {
                 .wrap(middleware::Logger::default())
                 .service(web::resource("/").to(index))
         })
-        .bind("127.0.0.1:8080")?
+        .bind(WEB_SERVER_BIND.to_string())?
         .run()
         .err_into(),
         bot()
