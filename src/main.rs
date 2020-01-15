@@ -8,7 +8,7 @@ use std::env;
 use telegram_bot::prelude::*;
 use telegram_bot::{Api, UpdateKind};
 
-static mut HS_OPEN: bool = false;
+static HS_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 lazy_static! {
     static ref BASE_URL: String = format!(
@@ -17,17 +17,22 @@ lazy_static! {
         port = env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
         token = env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
     );
-    static ref TOKEN: String = env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set");
-    static ref API: telegram_bot::Api = Api::new(TOKEN.clone());
+    static ref API: telegram_bot::Api =
+        Api::new(env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"));
     static ref GROUP_KEY: String =
         env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required");
-    static ref ID_GROUP: telegram_bot::types::refs::GroupId =
-        telegram_bot::types::refs::GroupId::new(
-            env::var("ID_GROUP")
-                .expect("ID_GROUP is required")
-                .parse::<telegram_bot::types::primitive::Integer>()
-                .expect("ID_GROUP not an integer")
-        );
+    static ref CHAT: telegram_bot::types::chat::MessageChat =
+        telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
+            id: telegram_bot::types::refs::GroupId::new(
+                env::var("ID_GROUP")
+                    .expect("ID_GROUP is required")
+                    .parse::<telegram_bot::types::primitive::Integer>()
+                    .expect("ID_GROUP not an integer")
+            ),
+            title: "Group".to_string(),
+            all_members_are_administrators: false,
+            invite_link: None,
+        });
 }
 
 #[derive(Debug)]
@@ -65,14 +70,8 @@ impl From<reqwest::Error> for Error {
 }
 
 async fn index() -> HttpResponse {
-    let chat = telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
-        id: *ID_GROUP,
-        title: "Group".to_string(),
-        all_members_are_administrators: false,
-        invite_link: None,
-    });
-    if unsafe { !HS_OPEN } {
-        if send_photos_to_chat(&chat).await.is_ok() {
+    if !HS_OPEN.load(std::sync::atomic::Ordering::Relaxed) {
+        if send_photos_to_chat(&CHAT).await.is_ok() {
             HttpResponse::Ok().finish()
         } else {
             HttpResponse::InternalServerError().finish()
@@ -113,6 +112,8 @@ async fn send_photos_to_chat(chat: &telegram_bot::types::MessageChat) -> Result<
 }
 
 async fn bot() -> Result<(), Error> {
+    API.send(CHAT.text("To Vivo!!")).await?;
+
     let mut stream = API.stream();
 
     while let Some(update) = stream.next().await {
@@ -129,8 +130,8 @@ async fn bot() -> Result<(), Error> {
                         [entity.offset as usize..entity.offset as usize + entity.length as usize];
                     match command {
                         "/photo" => send_photos_to_chat(&chat).await?,
-                        "/open" => unsafe { HS_OPEN = true },
-                        "/close" => unsafe { HS_OPEN = false },
+                        "/open" => HS_OPEN.store(true, std::sync::atomic::Ordering::Relaxed),
+                        "/close" => HS_OPEN.store(false, std::sync::atomic::Ordering::Relaxed),
                         _ => {}
                     }
                 }
