@@ -12,3 +12,7 @@ telegram-bot = { git = 'https://github.com/telegram-rs/telegram-bot' }
 actix-web = "2.0"
 actix-rt = "1.0"
 lazy_static = "1.4.0"
+
+[[bin]]
+name = "camera_bot"
+path = "src/main.rs"

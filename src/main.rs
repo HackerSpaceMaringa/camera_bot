@@ -1,32 +1,25 @@
-#[macro_use]
-extern crate lazy_static;
-
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use futures::prelude::*;
-use serde::Deserialize;
-use std::env;
 use telegram_bot::prelude::*;
-use telegram_bot::{Api, UpdateKind};
 
 static HS_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-lazy_static! {
+lazy_static::lazy_static! {
     static ref BASE_URL: String = format!(
         "http://{host}:{port}/{token}",
-        host = env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
-        port = env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
-        token = env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
+        host = std::env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
+        port = std::env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
+        token = std::env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
     );
     static ref API: telegram_bot::Api =
-        Api::new(env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"));
+        telegram_bot::Api::new(std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"));
     static ref GROUP_KEY: String =
-        env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required");
+        std::env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required");
     static ref WEB_SERVER_BIND: String =
-        env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080");
+        std::env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080");
     static ref CHAT: telegram_bot::types::chat::MessageChat =
         telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
             id: telegram_bot::types::refs::GroupId::new(
-                env::var("ID_GROUP")
+                std::env::var("ID_GROUP")
                     .expect("ID_GROUP is required")
                     .parse::<telegram_bot::types::primitive::Integer>()
                     .expect("ID_GROUP not an integer")
@@ -42,7 +35,7 @@ struct Error {
     message: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(serde::Deserialize, Debug)]
 struct Monitor {
     mid: String,
 }
@@ -71,15 +64,15 @@ impl From<reqwest::Error> for Error {
     }
 }
 
-async fn index() -> HttpResponse {
+async fn index() -> actix_web::HttpResponse {
     if !HS_OPEN.load(std::sync::atomic::Ordering::Relaxed) {
         if send_photos_to_chat(&CHAT).await.is_ok() {
-            HttpResponse::Ok().finish()
+            actix_web::HttpResponse::Ok().finish()
         } else {
-            HttpResponse::InternalServerError().finish()
+            actix_web::HttpResponse::InternalServerError().finish()
         }
     } else {
-        HttpResponse::Ok().finish()
+        actix_web::HttpResponse::Ok().finish()
     }
 }
 
@@ -118,12 +111,16 @@ async fn bot() -> Result<(), Error> {
 
     API.stream()
         .for_each_concurrent(100, |update| async {
-            if let UpdateKind::Message(telegram_bot::types::message::Message {
-                from: _user,
-                chat,
-                kind: telegram_bot::types::message::MessageKind::Text { data, entities },
+            if let Ok(telegram_bot::types::update::Update {
+                kind:
+                    telegram_bot::UpdateKind::Message(telegram_bot::types::message::Message {
+                        from: _user,
+                        chat,
+                        kind: telegram_bot::types::message::MessageKind::Text { data, entities },
+                        ..
+                    }),
                 ..
-            }) = update.unwrap().kind
+            }) = update
             {
                 for entity in &entities {
                     if entity.kind == telegram_bot::types::message::MessageEntityKind::BotCommand {
@@ -147,10 +144,10 @@ async fn bot() -> Result<(), Error> {
 #[actix_rt::main]
 async fn main() -> Result<(), Error> {
     futures::try_join!(
-        HttpServer::new(|| {
-            App::new()
-                .wrap(middleware::Logger::default())
-                .service(web::resource("/").to(index))
+        actix_web::HttpServer::new(|| {
+            actix_web::App::new()
+                .wrap(actix_web::middleware::Logger::default())
+                .service(actix_web::web::resource("/").to(index))
         })
         .bind(WEB_SERVER_BIND.to_string())?
         .run()
