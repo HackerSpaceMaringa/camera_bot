@@ -15,7 +15,7 @@ RUN cargo build --release
 
 FROM alpine
 
-RUN apk add --no-cache libgcc
+RUN apk add --no-cache libgcc openssl
 
 WORKDIR /app
 
