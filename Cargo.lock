@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "camera_bot"
-version = "0.3.2"
+version = "0.3.5"
 dependencies = [
  "actix-rt 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "actix-web 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
