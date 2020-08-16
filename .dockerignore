@@ -1,5 +1,6 @@
 /target
 **/*.rs.bk
 
+Dockerfile
+
 .env
-.env.*
