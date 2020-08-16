@@ -130,6 +130,14 @@ async fn bot() -> Result<(), Error> {
                             "/photo" => send_photos_to_chat(&chat).await.expect("Falha ao enviar"),
                             "/open" => HS_OPEN.store(true, std::sync::atomic::Ordering::Relaxed),
                             "/close" => HS_OPEN.store(false, std::sync::atomic::Ordering::Relaxed),
+                            "/status" => {
+                                API.send(chat.text(format!(
+                                    "{}",
+                                    HS_OPEN.load(std::sync::atomic::Ordering::Relaxed)
+                                )))
+                                .await
+                                .expect("Falha");
+                            }
                             _ => {}
                         }
                     }
