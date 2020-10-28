@@ -1,34 +1,42 @@
 use futures::prelude::*;
+use once_cell::sync::Lazy;
 use telegram_bot::prelude::*;
 
 static HS_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-lazy_static::lazy_static! {
-    static ref BASE_URL: String = format!(
+static BASE_URL: Lazy<String> = Lazy::new(|| {
+    format!(
         "http://{host}:{port}/{token}",
         host = std::env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
         port = std::env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
         token = std::env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
-    );
-    static ref API: telegram_bot::Api =
-        telegram_bot::Api::new(std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"));
-    static ref GROUP_KEY: String =
-        std::env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required");
-    static ref WEB_SERVER_BIND: String =
-        std::env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080");
-    static ref CHAT: telegram_bot::types::chat::MessageChat =
-        telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
-            id: telegram_bot::types::refs::GroupId::new(
-                std::env::var("ID_GROUP")
-                    .expect("ID_GROUP is required")
-                    .parse::<telegram_bot::types::primitive::Integer>()
-                    .expect("ID_GROUP not an integer")
-            ),
-            title: "Group".to_string(),
-            all_members_are_administrators: false,
-            invite_link: None,
-        });
-}
+    )
+});
+
+static API: Lazy<telegram_bot::Api> = Lazy::new(|| {
+    telegram_bot::Api::new(std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"))
+});
+
+static GROUP_KEY: Lazy<String> =
+    Lazy::new(|| std::env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required"));
+
+static WEB_SERVER_BIND: Lazy<String> = Lazy::new(|| {
+    std::env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080")
+});
+
+static CHAT: Lazy<telegram_bot::types::chat::MessageChat> = Lazy::new(|| {
+    telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
+        id: telegram_bot::types::refs::GroupId::new(
+            std::env::var("ID_GROUP")
+                .expect("ID_GROUP is required")
+                .parse::<telegram_bot::types::primitive::Integer>()
+                .expect("ID_GROUP not an integer"),
+        ),
+        title: "Group".to_string(),
+        all_members_are_administrators: false,
+        invite_link: None,
+    })
+});
 
 #[derive(Debug)]
 struct Error {
