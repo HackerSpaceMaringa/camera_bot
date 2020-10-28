@@ -1,17 +1,25 @@
 [package]
 name = "camera_bot"
-version = "0.3.5"
-authors = ["Guilherme Chichanoski <guilherme.chichanoski@gmail.com>", "Tiago Nascimento <tiago@theosirian.com>"]
+version = "0.3.6"
 edition = "2018"
+authors = [
+    "Guilherme Chichanoski <guilherme.chichanoski@gmail.com>",
+    "Tiago Nascimento <tiago@theosirian.com>",
+]
 
 [dependencies]
-reqwest = { version = "0.10", features = ["json"] }
-futures = "0.3"
-serde = "1.0"
-telegram-bot = { git = 'https://github.com/telegram-rs/telegram-bot' }
-actix-web = "2.0"
 actix-rt = "1.0"
+actix-web = "2.0"
+futures = "0.3"
 once_cell = "1.4.1"
+serde = "1.0"
+
+[dependencies.reqwest]
+version = "0.10"
+features = ["json"]
+
+[dependencies.telegram-bot]
+git = "https://github.com/telegram-rs/telegram-bot"
 
 [[bin]]
 name = "camera_bot"
