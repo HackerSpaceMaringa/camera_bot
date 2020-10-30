@@ -1,41 +1,47 @@
+use actix_web::middleware::Logger;
+use actix_web::web::resource;
+use actix_web::{App, HttpResponse, HttpServer};
 use futures::prelude::*;
 use once_cell::sync::Lazy;
+use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
 use telegram_bot::prelude::*;
-
-static HS_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+use telegram_bot::types::*;
 
 static BASE_URL: Lazy<String> = Lazy::new(|| {
     format!(
         "http://{host}:{port}/{token}",
-        host = std::env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
-        port = std::env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
-        token = std::env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
+        host = env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
+        port = env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
+        token = env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
     )
 });
 
-static API: Lazy<telegram_bot::Api> = Lazy::new(|| {
-    telegram_bot::Api::new(std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"))
-});
-
 static GROUP_KEY: Lazy<String> =
-    Lazy::new(|| std::env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required"));
+    Lazy::new(|| env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required"));
 
-static WEB_SERVER_BIND: Lazy<String> = Lazy::new(|| {
-    std::env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080")
+static HS_OPEN: AtomicBool = AtomicBool::new(false);
+
+static TELEGRAM_API: Lazy<telegram_bot::Api> = Lazy::new(|| {
+    telegram_bot::Api::new(env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"))
 });
 
-static CHAT: Lazy<telegram_bot::types::chat::MessageChat> = Lazy::new(|| {
-    telegram_bot::types::chat::MessageChat::Group(telegram_bot::types::chat::Group {
-        id: telegram_bot::types::refs::GroupId::new(
-            std::env::var("ID_GROUP")
+static TELEGRAM_CHAT: Lazy<MessageChat> = Lazy::new(|| {
+    MessageChat::Group(Group {
+        id: GroupId::new(
+            env::var("ID_GROUP")
                 .expect("ID_GROUP is required")
-                .parse::<telegram_bot::types::primitive::Integer>()
+                .parse::<Integer>()
                 .expect("ID_GROUP not an integer"),
         ),
         title: "Group".to_string(),
         all_members_are_administrators: false,
         invite_link: None,
     })
+});
+
+static WEB_SERVER_BIND: Lazy<String> = Lazy::new(|| {
+    env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080")
 });
 
 #[derive(Debug)]
@@ -72,19 +78,18 @@ impl From<reqwest::Error> for Error {
     }
 }
 
-async fn index() -> actix_web::HttpResponse {
-    if !HS_OPEN.load(std::sync::atomic::Ordering::Relaxed) {
-        if send_photos_to_chat(&CHAT).await.is_ok() {
-            actix_web::HttpResponse::Ok().finish()
-        } else {
-            actix_web::HttpResponse::InternalServerError().finish()
+async fn index() -> HttpResponse {
+    if !HS_OPEN.load(Ordering::Relaxed) {
+        match send_photos_to_chat(&TELEGRAM_CHAT).await {
+            Ok(_) => HttpResponse::Ok().finish(),
+            Err(_) => HttpResponse::InternalServerError().finish(),
         }
     } else {
-        actix_web::HttpResponse::Ok().finish()
+        HttpResponse::Ok().finish()
     }
 }
 
-async fn send_photos_to_chat(chat: &telegram_bot::types::MessageChat) -> Result<(), Error> {
+async fn send_photos_to_chat(chat: &MessageChat) -> Result<(), Error> {
     let monitors: Vec<Monitor> = reqwest::get(&format!(
         "{base_url}/smonitor/{group_key}",
         base_url = *BASE_URL,
@@ -105,46 +110,44 @@ async fn send_photos_to_chat(chat: &telegram_bot::types::MessageChat) -> Result<
         .bytes()
         .await?;
 
-        API.send(chat.photo(telegram_bot::types::InputFileUpload::with_data(
-            bytes, "teste",
-        )))
-        .await?;
+        TELEGRAM_API
+            .send(chat.photo(InputFileUpload::with_data(bytes, "teste")))
+            .await?;
     }
 
     Ok(())
 }
 
 async fn bot() -> Result<(), Error> {
-    API.send(CHAT.text("To Vivo!!")).await?;
+    TELEGRAM_API.send(TELEGRAM_CHAT.text("To Vivo!!")).await?;
 
-    API.stream()
+    TELEGRAM_API
+        .stream()
         .for_each_concurrent(100, |update| async {
-            if let Ok(telegram_bot::types::update::Update {
+            if let Ok(Update {
                 kind:
-                    telegram_bot::UpdateKind::Message(telegram_bot::types::message::Message {
+                    UpdateKind::Message(Message {
                         from: _user,
                         chat,
-                        kind: telegram_bot::types::message::MessageKind::Text { data, entities },
+                        kind: MessageKind::Text { data, entities },
                         ..
                     }),
                 ..
             }) = update
             {
                 for entity in &entities {
-                    if entity.kind == telegram_bot::types::message::MessageEntityKind::BotCommand {
+                    if entity.kind == MessageEntityKind::BotCommand {
                         let command = &data.as_str()[entity.offset as usize
                             ..entity.offset as usize + entity.length as usize];
                         match command {
                             "/photo" => send_photos_to_chat(&chat).await.expect("Falha ao enviar"),
-                            "/open" => HS_OPEN.store(true, std::sync::atomic::Ordering::Relaxed),
-                            "/close" => HS_OPEN.store(false, std::sync::atomic::Ordering::Relaxed),
+                            "/open" => HS_OPEN.store(true, Ordering::Relaxed),
+                            "/close" => HS_OPEN.store(false, Ordering::Relaxed),
                             "/status" => {
-                                API.send(chat.text(format!(
-                                    "{}",
-                                    HS_OPEN.load(std::sync::atomic::Ordering::Relaxed)
-                                )))
-                                .await
-                                .expect("Falha");
+                                TELEGRAM_API
+                                    .send(chat.text(format!("{}", HS_OPEN.load(Ordering::Relaxed))))
+                                    .await
+                                    .expect("Falha");
                             }
                             _ => {}
                         }
@@ -160,10 +163,10 @@ async fn bot() -> Result<(), Error> {
 #[actix_rt::main]
 async fn main() -> Result<(), Error> {
     futures::try_join!(
-        actix_web::HttpServer::new(|| {
-            actix_web::App::new()
-                .wrap(actix_web::middleware::Logger::default())
-                .service(actix_web::web::resource("/").to(index))
+        HttpServer::new(|| {
+            App::new()
+                .wrap(Logger::default())
+                .service(resource("/").to(index))
         })
         .bind(WEB_SERVER_BIND.to_string())?
         .run()
