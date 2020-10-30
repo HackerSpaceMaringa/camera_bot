@@ -1,6 +1,7 @@
 use actix_web::middleware::Logger;
 use actix_web::web::resource;
 use actix_web::{App, HttpResponse, HttpServer};
+use anyhow::Result;
 use futures::prelude::*;
 use once_cell::sync::Lazy;
 use std::env;
@@ -44,38 +45,9 @@ static WEB_SERVER_BIND: Lazy<String> = Lazy::new(|| {
     env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080")
 });
 
-#[derive(Debug)]
-struct Error {
-    message: String,
-}
-
 #[derive(serde::Deserialize, Debug)]
 struct Monitor {
     mid: String,
-}
-
-impl From<std::io::Error> for Error {
-    fn from(_: std::io::Error) -> Self {
-        Error {
-            message: "IO deu ruim".to_string(),
-        }
-    }
-}
-
-impl From<telegram_bot::Error> for Error {
-    fn from(_: telegram_bot::Error) -> Self {
-        Error {
-            message: "Bot deu ruim".to_string(),
-        }
-    }
-}
-
-impl From<reqwest::Error> for Error {
-    fn from(_: reqwest::Error) -> Self {
-        Error {
-            message: "Shinobi deu ruim".to_string(),
-        }
-    }
 }
 
 async fn index() -> HttpResponse {
@@ -89,37 +61,46 @@ async fn index() -> HttpResponse {
     }
 }
 
-async fn send_photos_to_chat(chat: &MessageChat) -> Result<(), Error> {
-    let monitors: Vec<Monitor> = reqwest::get(&format!(
+async fn send_photos_to_chat(chat: &MessageChat) -> Result<()> {
+    let monitors = reqwest::get(&format!(
         "{base_url}/smonitor/{group_key}",
         base_url = *BASE_URL,
-        group_key = *GROUP_KEY
+        group_key = *GROUP_KEY,
     ))
     .await?
-    .json()
+    .json::<Vec<Monitor>>()
     .await?;
 
-    for monitor in &monitors {
-        let bytes = reqwest::get(&format!(
-            "{base_url}/jpeg/{group_key}/{monitor_id}/s.jpg",
-            base_url = *BASE_URL,
-            group_key = *GROUP_KEY,
-            monitor_id = monitor.mid
-        ))
-        .await?
-        .bytes()
-        .await?;
-
+    for monitor in monitors {
         TELEGRAM_API
-            .send(chat.photo(InputFileUpload::with_data(bytes, "teste")))
+            .send(
+                chat.photo(InputFileUpload::with_data(
+                    reqwest::get(&format!(
+                        "{base_url}/jpeg/{group_key}/{monitor_id}/s.jpg",
+                        base_url = *BASE_URL,
+                        group_key = *GROUP_KEY,
+                        monitor_id = monitor.mid,
+                    ))
+                    .await?
+                    .bytes()
+                    .await?,
+                    monitor.mid,
+                )),
+            )
             .await?;
     }
 
     Ok(())
 }
 
-async fn bot() -> Result<(), Error> {
-    TELEGRAM_API.send(TELEGRAM_CHAT.text("To Vivo!!")).await?;
+async fn bot() -> Result<()> {
+    TELEGRAM_API
+        .send(TELEGRAM_CHAT.text(format!(
+            "{bot_name} v{bot_version} online!",
+            bot_name = env!("CARGO_PKG_NAME"),
+            bot_version = env!("CARGO_PKG_VERSION"),
+        )))
+        .await?;
 
     TELEGRAM_API
         .stream()
@@ -127,7 +108,6 @@ async fn bot() -> Result<(), Error> {
             if let Ok(Update {
                 kind:
                     UpdateKind::Message(Message {
-                        from: _user,
                         chat,
                         kind: MessageKind::Text { data, entities },
                         ..
@@ -135,19 +115,23 @@ async fn bot() -> Result<(), Error> {
                 ..
             }) = update
             {
-                for entity in &entities {
+                for entity in entities {
                     if entity.kind == MessageEntityKind::BotCommand {
                         let command = &data.as_str()[entity.offset as usize
                             ..entity.offset as usize + entity.length as usize];
                         match command {
-                            "/photo" => send_photos_to_chat(&chat).await.expect("Falha ao enviar"),
+                            "/photo" => {
+                                send_photos_to_chat(&chat)
+                                    .await
+                                    .expect("Failed to send photos to chat");
+                            }
                             "/open" => HS_OPEN.store(true, Ordering::Relaxed),
                             "/close" => HS_OPEN.store(false, Ordering::Relaxed),
                             "/status" => {
                                 TELEGRAM_API
                                     .send(chat.text(format!("{}", HS_OPEN.load(Ordering::Relaxed))))
                                     .await
-                                    .expect("Falha");
+                                    .expect("Failed to send status to chat");
                             }
                             _ => {}
                         }
@@ -161,7 +145,7 @@ async fn bot() -> Result<(), Error> {
 }
 
 #[actix_rt::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<()> {
     futures::try_join!(
         HttpServer::new(|| {
             App::new()
