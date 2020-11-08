@@ -4,10 +4,6 @@ WORKDIR /src
 
 RUN apk add --no-cache musl-dev openssl-dev
 
-COPY Cargo.* ./
-
-RUN cargo update --locked
-
 COPY . .
 
 ENV RUSTFLAGS "-C target-feature=-crt-static"

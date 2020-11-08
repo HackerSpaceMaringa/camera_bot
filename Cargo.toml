@@ -1,6 +1,6 @@
 [package]
 name = "camera_bot"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2018"
 authors = [
     "Guilherme Chichanoski <guilherme.chichanoski@gmail.com>",
