@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "camera_bot"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "actix-rt 2.2.0",
  "actix-web",
