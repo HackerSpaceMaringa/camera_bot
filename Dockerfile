@@ -2,7 +2,7 @@ FROM docker.io/rust:alpine as build
 
 WORKDIR /src
 
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev openssl-dev
 
 COPY . .
 
