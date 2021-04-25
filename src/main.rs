@@ -176,7 +176,7 @@ async fn bot() -> Result<()> {
     Ok(())
 }
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> Result<()> {
     env_logger::init();
 

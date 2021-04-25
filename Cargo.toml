@@ -1,6 +1,6 @@
 [package]
 name = "camera_bot"
-version = "0.3.10"
+version = "0.3.11"
 edition = "2018"
 authors = [
     "Guilherme Chichanoski <guilherme.chichanoski@gmail.com>",
@@ -8,7 +8,6 @@ authors = [
 ]
 
 [dependencies]
-actix-rt = "2"
 anyhow = "1"
 futures = "0.3"
 serde = "1"
