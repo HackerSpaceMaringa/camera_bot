@@ -1,4 +1,4 @@
-FROM docker.io/rust:alpine as build
+FROM docker.io/rustlang/rust:nightly-alpine as build
 
 WORKDIR /src
 
