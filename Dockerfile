@@ -1,17 +1,14 @@
-FROM rust:alpine as build
+FROM docker.io/rust:alpine as build
 
 WORKDIR /src
 
-RUN apk add --no-cache musl-dev openssl-dev
+RUN apk add --no-cache musl-dev
 
 COPY . .
 
-ENV RUSTFLAGS "-C target-feature=-crt-static"
 RUN cargo build --release
 
-FROM alpine
-
-RUN apk add --no-cache libgcc openssl
+FROM docker.io/alpine
 
 WORKDIR /app
 
