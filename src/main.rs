@@ -6,7 +6,7 @@ use actix_web::{App, HttpResponse, HttpServer};
 use anyhow::Result;
 use futures::prelude::*;
 use futures::try_join;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::env;
 use std::lazy::SyncLazy;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,10 +128,10 @@ async fn bot() -> Result<()> {
 
     TELEGRAM_API
         .stream()
-        .for_each_concurrent(100, |update| async {
+        .try_for_each_concurrent(100, |update| async {
             info!("Receive new event");
 
-            if let Ok(Update {
+            if let Update {
                 kind:
                     UpdateKind::Message(Message {
                         chat,
@@ -139,7 +139,7 @@ async fn bot() -> Result<()> {
                         ..
                     }),
                 ..
-            }) = update
+            } = update
             {
                 debug!("Message received \"{}\" from {}", data, chat.id());
 
@@ -151,9 +151,9 @@ async fn bot() -> Result<()> {
                             "/photo" => {
                                 info!("Got a photo request from {}", chat.id());
 
-                                send_photos_to_chat(&chat)
-                                    .await
-                                    .expect("Failed to send photos to chat");
+                                send_photos_to_chat(&chat).await.map_err(|e| {
+                                    error!("Failed to send photos to {} with {}", chat.id(), e);
+                                });
                             }
                             "/open" => HS_OPEN.store(true, Ordering::Relaxed),
                             "/close" => HS_OPEN.store(false, Ordering::Relaxed),
@@ -161,17 +161,19 @@ async fn bot() -> Result<()> {
                                 TELEGRAM_API
                                     .send(chat.text(format!("{}", HS_OPEN.load(Ordering::Relaxed))))
                                     .await
-                                    .expect("Failed to send status to chat");
+                                    .map_err(|e| {
+                                        error!("Failed to send status to {} with {}", chat.id(), e);
+                                    });
                             }
                             _ => {}
                         }
                     }
                 }
-            } else {
-                warn!("Event received with an error {:?}", update);
             };
+
+            Ok(())
         })
-        .await;
+        .await?;
 
     Ok(())
 }
