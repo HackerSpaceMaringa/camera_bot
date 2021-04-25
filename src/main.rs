@@ -178,6 +178,8 @@ async fn bot() -> Result<()> {
 
 #[actix_rt::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     try_join!(
         HttpServer::new(|| {
             App::new()
