@@ -1,198 +1,128 @@
 #![feature(once_cell)]
+#![feature(async_closure)]
 
-use actix_web::middleware::Logger;
-use actix_web::web::resource;
-use actix_web::{App, HttpResponse, HttpServer};
 use anyhow::Result;
 use futures::prelude::*;
-use futures::try_join;
-use log::{debug, error, info};
-use std::env;
-use std::lazy::SyncLazy;
-use std::sync::atomic::{AtomicBool, Ordering};
-use telegram_bot::prelude::*;
-use telegram_bot::types::*;
+use log::{debug, info};
+use std::{env, error::Error, lazy::SyncLazy};
+use teloxide::{prelude::*, utils::command::BotCommand};
 
-static BASE_URL: SyncLazy<String> = SyncLazy::new(|| {
-    format!(
-        "http://{host}:{port}/{token}",
-        host = env::var("SHINOBI_HOST").expect("SHINOBI_HOST is required"),
-        port = env::var("SHINOBI_PORT").unwrap_or_else(|_| "8080".to_string()),
-        token = env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN is required")
-    )
-});
+static SHINOBI_API: SyncLazy<ShinobiApi> = SyncLazy::new(ShinobiApi::from_env);
+static TELEGRAM_BOT: SyncLazy<AutoSend<Bot>> = SyncLazy::new(|| Bot::from_env().auto_send());
 
-static GROUP_KEY: SyncLazy<String> =
-    SyncLazy::new(|| env::var("SHINOBI_GROUP_KEY").expect("SHINOBI_GROUP_KEY is required"));
-
-static HS_OPEN: AtomicBool = AtomicBool::new(false);
-
-static TELEGRAM_API: SyncLazy<telegram_bot::Api> = SyncLazy::new(|| {
-    telegram_bot::Api::new(env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set"))
-});
-
-static TELEGRAM_CHAT: SyncLazy<MessageChat> = SyncLazy::new(|| {
-    MessageChat::Group(Group {
-        id: GroupId::new(
-            env::var("ID_GROUP")
-                .expect("ID_GROUP is required")
-                .parse::<Integer>()
-                .expect("ID_GROUP not an integer"),
-        ),
-        title: "Group".to_string(),
-        all_members_are_administrators: false,
-        invite_link: None,
-    })
-});
-
-static WEB_SERVER_BIND: SyncLazy<String> = SyncLazy::new(|| {
-    env::var("WEB_SERVER_BIND").expect("WEB_SERVER_BIND is required, format 127.0.0.1:8080")
-});
+#[derive(BotCommand)]
+#[command(rename = "lowercase")]
+enum Command {
+    Photo,
+}
 
 #[derive(serde::Deserialize, Debug)]
 struct Monitor {
     mid: String,
 }
 
-async fn index() -> HttpResponse {
-    info!("Receving request from Shinobi (Trigger)");
+struct ShinobiApi {
+    group_key: String,
+    url: String,
+    token: String,
+}
 
-    if !HS_OPEN.load(Ordering::Relaxed) {
-        match send_photos_to_chat(&TELEGRAM_CHAT).await {
-            Ok(_) => {
-                info!("Sent triggered photos to chat");
-                HttpResponse::Ok().finish()
-            }
-            Err(_) => {
-                error!("Couldn't send event photos to chat");
-                HttpResponse::InternalServerError().finish()
-            }
+impl ShinobiApi {
+    fn from_env() -> Self {
+        Self {
+            group_key: env::var("GROUP_KEY").expect("GROUP_KEY not provided"),
+            url: env::var("SHINOBI_URL").expect("SHINOBI_URL not provided"),
+            token: env::var("SHINOBI_TOKEN").expect("SHINOBI_TOKEN not provided"),
         }
-    } else {
-        HttpResponse::Ok().finish()
+    }
+
+    async fn get_monitors(&self) -> Result<Vec<Monitor>> {
+        debug!("retrieving monitors from {}", self.get_request_url());
+
+        Ok(reqwest::get(&format!(
+            "{base_url}/smonitor/{group_key}",
+            base_url = self.get_request_url(),
+            group_key = self.group_key,
+        ))
+        .await?
+        .json::<Vec<Monitor>>()
+        .await?)
+    }
+
+    fn get_request_url(&self) -> String {
+        format!("{url}/{token}", url = self.url, token = self.token)
     }
 }
 
-async fn send_photos_to_chat(chat: &MessageChat) -> Result<()> {
-    let monitors = reqwest::get(&format!(
-        "{base_url}/smonitor/{group_key}",
-        base_url = *BASE_URL,
-        group_key = *GROUP_KEY,
-    ))
-    .await?
-    .json::<Vec<Monitor>>()
-    .await?;
+impl Monitor {
+    async fn get_photo(&self, shinobi_api: &ShinobiApi) -> Result<bytes::Bytes> {
+        let photo = reqwest::get(&format!(
+            "{base_url}/jpeg/{group_key}/{monitor_id}/s.jpg",
+            base_url = shinobi_api.get_request_url(),
+            group_key = shinobi_api.group_key,
+            monitor_id = self.mid,
+        ))
+        .await?
+        .bytes()
+        .await?;
+
+        Ok(photo)
+    }
+}
+
+async fn send_photos_to_chat(cx: &UpdateWithCx<AutoSend<Bot>, Message>) -> Result<()> {
+    let username = match &cx.update.chat.kind {
+        teloxide::types::ChatKind::Private(teloxide::types::ChatPrivate { username, .. }) => {
+            username
+        }
+        teloxide::types::ChatKind::Public(teloxide::types::ChatPublic { title, .. }) => title,
+    }
+    .as_ref()
+    .unwrap_or(&"USUARIO_NAO_RECONHECIDO".to_string())
+    .to_owned();
+
+    let monitors = SHINOBI_API.get_monitors().await?;
 
     info!(
         "Sending photos of #{} monitors to chat {}",
         monitors.len(),
-        chat.id()
+        username
     );
 
-    for monitor in monitors {
-        debug!("Sending photo of {} to {}", monitor.mid, chat.id());
+    let photos: Vec<teloxide::types::InputMedia> =
+        future::join_all(monitors.iter().map(async move |m| {
+            teloxide::types::InputMedia::Photo(teloxide::types::InputMediaPhoto::new(
+                teloxide::types::InputFile::memory(
+                    m.mid.to_owned(),
+                    m.get_photo(&SHINOBI_API).await.unwrap().as_ref().to_owned(),
+                ),
+            ))
+        }))
+        .await;
 
-        TELEGRAM_API
-            .send(
-                chat.photo(InputFileUpload::with_data(
-                    reqwest::get(&format!(
-                        "{base_url}/jpeg/{group_key}/{monitor_id}/s.jpg",
-                        base_url = *BASE_URL,
-                        group_key = *GROUP_KEY,
-                        monitor_id = monitor.mid,
-                    ))
-                    .await?
-                    .bytes()
-                    .await?,
-                    monitor.mid,
-                )),
-            )
-            .await?;
-    }
+    cx.answer_media_group(photos).await?;
 
     Ok(())
 }
 
-async fn bot() -> Result<()> {
+async fn answer(
+    cx: UpdateWithCx<AutoSend<Bot>, Message>,
+    command: Command,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    match command {
+        Command::Photo => {
+            send_photos_to_chat(&cx).await?;
+        }
+    };
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
     info!("Bot starting...");
 
-    TELEGRAM_API
-        .send(TELEGRAM_CHAT.text(format!(
-            "{bot_name} v{bot_version} online!",
-            bot_name = env!("CARGO_PKG_NAME"),
-            bot_version = env!("CARGO_PKG_VERSION"),
-        )))
-        .await?;
+    teloxide::enable_logging!();
 
-    debug!("Sent online message");
-
-    TELEGRAM_API
-        .stream()
-        .try_for_each_concurrent(100, |update| async {
-            info!("Receive new event");
-
-            if let Update {
-                kind:
-                    UpdateKind::Message(Message {
-                        chat,
-                        kind: MessageKind::Text { data, entities },
-                        ..
-                    }),
-                ..
-            } = update
-            {
-                debug!("Message received \"{}\" from {}", data, chat.id());
-
-                for entity in entities {
-                    if entity.kind == MessageEntityKind::BotCommand {
-                        let command = &data.as_str()[entity.offset as usize
-                            ..entity.offset as usize + entity.length as usize];
-                        match command {
-                            "/photo" => {
-                                info!("Got a photo request from {}", chat.id());
-
-                                send_photos_to_chat(&chat).await.map_err(|e| {
-                                    error!("Failed to send photos to {} with {}", chat.id(), e);
-                                });
-                            }
-                            "/open" => HS_OPEN.store(true, Ordering::Relaxed),
-                            "/close" => HS_OPEN.store(false, Ordering::Relaxed),
-                            "/status" => {
-                                TELEGRAM_API
-                                    .send(chat.text(format!("{}", HS_OPEN.load(Ordering::Relaxed))))
-                                    .await
-                                    .map_err(|e| {
-                                        error!("Failed to send status to {} with {}", chat.id(), e);
-                                    });
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            };
-
-            Ok(())
-        })
-        .await?;
-
-    Ok(())
-}
-
-#[actix_web::main]
-async fn main() -> Result<()> {
-    env_logger::init();
-
-    try_join!(
-        HttpServer::new(|| {
-            App::new()
-                .wrap(Logger::default())
-                .service(resource("/").to(index))
-        })
-        .bind(WEB_SERVER_BIND.to_string())?
-        .run()
-        .err_into(),
-        bot(),
-    )?;
-
-    Ok(())
+    teloxide::commands_repl(TELEGRAM_BOT.clone(), "camera_bot", answer).await;
 }
