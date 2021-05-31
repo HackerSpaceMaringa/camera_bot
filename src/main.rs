@@ -55,7 +55,7 @@ impl ShinobiApi {
 }
 
 impl Monitor {
-    async fn get_photo(&self, shinobi_api: &ShinobiApi) -> Result<bytes::Bytes> {
+    async fn get_photo(&self, shinobi_api: &ShinobiApi) -> Result<teloxide::types::InputMedia> {
         let photo = reqwest::get(&format!(
             "{base_url}/jpeg/{group_key}/{monitor_id}/s.jpg",
             base_url = shinobi_api.get_request_url(),
@@ -66,20 +66,34 @@ impl Monitor {
         .bytes()
         .await?;
 
-        Ok(photo)
+        Ok(teloxide::types::InputMedia::Photo(
+            teloxide::types::InputMediaPhoto::new(teloxide::types::InputFile::memory(
+                self.mid.to_owned(),
+                photo.as_ref().to_owned(),
+            )),
+        ))
     }
 }
 
 async fn send_photos_to_chat(cx: &UpdateWithCx<AutoSend<Bot>, Message>) -> Result<()> {
     let username = match &cx.update.chat.kind {
-        teloxide::types::ChatKind::Private(teloxide::types::ChatPrivate { username, .. }) => {
-            username
+        teloxide::types::ChatKind::Private(teloxide::types::ChatPrivate {
+            username,
+            first_name,
+            last_name,
+            ..
+        }) => {
+            format!(
+                "{first_name} {last_name} <{username}>",
+                first_name = first_name.as_ref().unwrap_or(&"".into()),
+                last_name = last_name.as_ref().unwrap_or(&"".into()),
+                username = username.as_ref().unwrap_or(&"".into())
+            )
         }
-        teloxide::types::ChatKind::Public(teloxide::types::ChatPublic { title, .. }) => title,
-    }
-    .as_ref()
-    .unwrap_or(&"USUARIO_NAO_RECONHECIDO".to_string())
-    .to_owned();
+        teloxide::types::ChatKind::Public(teloxide::types::ChatPublic { title, .. }) => {
+            title.as_ref().unwrap_or(&"".into()).to_string()
+        }
+    };
 
     let monitors = SHINOBI_API.get_monitors().await?;
 
@@ -89,16 +103,16 @@ async fn send_photos_to_chat(cx: &UpdateWithCx<AutoSend<Bot>, Message>) -> Resul
         username
     );
 
-    let photos: Vec<teloxide::types::InputMedia> =
-        future::join_all(monitors.iter().map(async move |m| {
-            teloxide::types::InputMedia::Photo(teloxide::types::InputMediaPhoto::new(
-                teloxide::types::InputFile::memory(
-                    m.mid.to_owned(),
-                    m.get_photo(&SHINOBI_API).await.unwrap().as_ref().to_owned(),
-                ),
-            ))
-        }))
-        .await;
+    let photos: Vec<teloxide::types::InputMedia> = future::join_all(
+        monitors
+            .iter()
+            .map(async move |monitor| monitor.get_photo(&SHINOBI_API).await),
+    )
+    .await
+    .iter()
+    .filter_map(|photo| photo.as_ref().ok())
+    .cloned()
+    .collect();
 
     cx.answer_media_group(photos).await?;
 

@@ -71,7 +71,7 @@ checksum = "b700ce4376041dcd0a327fd0097c41095743c4c8af8887265942faf1100bd040"
 
 [[package]]
 name = "camera_bot"
-version = "0.3.13"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "bytes",
